@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "dh.h"  
+#include "crypto_utils.h"
 
 #define MYPORT 3999 /* Connection port for clients. */
 
@@ -78,11 +79,22 @@ int main() {
     // Print confirmation that p and g were sent successfully
     printf("[*] Sent p = %llu and g = %llu to client\n", p, g);
 
-    //Generate private key and public key
+    // Generate private and public key
     uint64_t private_key = generate_private_key(p);
     uint64_t public_key = generate_public_key(g, private_key, p);
 
-    //Send public key to client 
+    // --- Sign public key ---
+    uint8_t signature[256];
+    size_t siglen;
+
+    if (sign_message("private.pem", (uint8_t *)&public_key, sizeof(public_key), signature, &siglen) != 0) {
+        fprintf(stderr, "Error signing public key.\n");
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // --- Send public key ---
     if (send(client_fd, &public_key, sizeof(public_key), 0) == -1) {
         perror("Error sending public key");
         close(client_fd);
@@ -90,7 +102,23 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("[*] Sent public key: %llu\n", public_key);
+    // --- Send signature length ---
+    if (send(client_fd, &siglen, sizeof(siglen), 0) == -1) {
+        perror("Error sending signature length");
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // --- Send signature ---
+    if (send(client_fd, signature, siglen, 0) == -1) {
+        perror("Error sending signature");
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[*] Sent signed public key (%llu) with signature (%zu bytes)\n", public_key, siglen);
 
     //Receive the public key from the client 
     uint64_t client_pub_key;
